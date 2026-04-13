@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Space Shooter</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #111; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; font-family: monospace; color: #eee; }
+  canvas { display: block; background: #0a0a1a; border-radius: 8px; cursor: none; }
+  #ui { display: flex; justify-content: center; gap: 32px; padding: 8px 0 4px; font-size: 14px; }
+  #msg { text-align: center; font-size: 18px; font-weight: 500; min-height: 28px; padding: 4px 0 8px; color: #eee; }
+  button { font-family: monospace; font-size: 14px; padding: 8px 24px; border-radius: 8px; border: 1px solid #555; background: transparent; color: #eee; cursor: pointer; margin-top: 8px; }
+  button:hover { background: #222; }
+  #controls { text-align: center; padding: 6px 0 8px; font-size: 12px; color: #888; font-family: sans-serif; }
+</style>
+</head>
+<body>
+<div id="ui"><span>Score: <b id="score">0</b></span><span>Lives: <b id="lives">♥♥♥</b></span><span>Level: <b id="level">1</b></span></div>
+<div id="msg"></div>
+<canvas id="c" width="480" height="360"></canvas>
+<div id="controls">Arrow keys or A/D to move &nbsp;·&nbsp; Space to shoot &nbsp;·&nbsp; Touch: tap sides to move, centre to shoot</div>
+<div style="text-align:center"><button id="btn">Start Game</button></div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+let state = 'idle';
+let score = 0, lives = 3, level = 1;
+let player, bullets, enemies, particles, enemyBullets;
+let keys = {}, animId;
+let shootCooldown = 0;
+let lastTime = 0;
+
+function init() {
+  player = { x: W/2, y: H - 50, w: 28, h: 20, speed: 220 };
+  bullets = []; enemies = []; particles = []; enemyBullets = [];
+  score = 0; lives = 3; level = 1; shootCooldown = 0;
+  spawnWave();
+  updateUI();
+}
+
+function spawnWave() {
+  enemies = [];
+  const cols = 8, rows = Math.min(2 + level, 5);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      enemies.push({
+        x: 36 + c * 52, y: 30 + r * 36,
+        w: 28, h: 20,
+        dx: 40 + level * 8,
+        type: r === 0 ? 'elite' : 'basic',
+        shootChance: 0.0003 + level * 0.0001
+      });
+    }
+  }
+}
+
+function spawnParticles(x, y, color, n) {
+  for (let i = 0; i < n; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 40 + Math.random() * 80;
+    particles.push({ x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed, life: 1, color });
+  }
+}
+
+function drawShip(x, y, w, h, color, isPlayer) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = color;
+  if (isPlayer) {
+    ctx.beginPath();
+    ctx.moveTo(0, -h/2); ctx.lineTo(w/2, h/2);
+    ctx.lineTo(w*0.15, h*0.2); ctx.lineTo(-w*0.15, h*0.2);
+    ctx.lineTo(-w/2, h/2); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#4af'; ctx.fillRect(-3, h*0.05, 6, h*0.2);
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(0, h/2); ctx.lineTo(w/2, -h/2);
+    ctx.lineTo(w*0.15, -h*0.1); ctx.lineTo(-w*0.15, -h*0.1);
+    ctx.lineTo(-w/2, -h/2); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function update(dt) {
+  shootCooldown -= dt;
+
+  if ((keys['ArrowLeft'] || keys['a'] || keys['A']) && player.x - player.w/2 > 0)
+    player.x -= player.speed * dt;
+  if ((keys['ArrowRight'] || keys['d'] || keys['D']) && player.x + player.w/2 < W)
+    player.x += player.speed * dt;
+  if ((keys[' '] || keys['Space']) && shootCooldown <= 0) {
+    bullets.push({ x: player.x, y: player.y - player.h/2, vy: -420 });
+    shootCooldown = 0.2;
+  }
+
+  bullets.forEach(b => { b.y += b.vy * dt; });
+  bullets = bullets.filter(b => b.y > 0);
+
+  enemyBullets.forEach(b => { b.y += b.vy * dt; });
+  enemyBullets = enemyBullets.filter(b => b.y < H);
+
+  let edgeHit = false;
+  enemies.forEach(e => {
+    if (e.x - e.w/2 <= 2 || e.x + e.w/2 >= W - 2) edgeHit = true;
+  });
+  if (edgeHit) enemies.forEach(e => { e.dx *= -1; e.y += 10; });
+  enemies.forEach(e => {
+    e.x += e.dx * dt;
+    if (Math.random() < e.shootChance)
+      enemyBullets.push({ x: e.x, y: e.y + e.h/2, vy: 160 + level * 20 });
+  });
+
+  bullets.forEach((b, bi) => {
+    enemies.forEach((e, ei) => {
+      if (Math.abs(b.x - e.x) < e.w/2 && Math.abs(b.y - e.y) < e.h/2) {
+        score += e.type === 'elite' ? 20 : 10;
+        spawnParticles(e.x, e.y, e.type === 'elite' ? '#f84' : '#4cf', 8);
+        enemies.splice(ei, 1);
+        bullets.splice(bi, 1);
+        updateUI();
+      }
+    });
+  });
+
+  enemyBullets.forEach((b, bi) => {
+    if (Math.abs(b.x - player.x) < player.w/2 && Math.abs(b.y - player.y) < player.h/2) {
+      lives--;
+      spawnParticles(player.x, player.y, '#4af', 12);
+      enemyBullets.splice(bi, 1);
+      updateUI();
+      if (lives <= 0) { endGame(false); return; }
+    }
+  });
+
+  enemies.forEach(e => {
+    if (e.y + e.h/2 >= player.y - player.h/2) endGame(false);
+  });
+
+  particles.forEach(p => {
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    p.vx *= 0.9; p.vy *= 0.9;
+    p.life -= dt * 2;
+  });
+  particles = particles.filter(p => p.life > 0);
+
+  if (enemies.length === 0) { level++; spawnWave(); updateUI(); }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#0a0a1a'; ctx.fillRect(0, 0, W, H);
+
+  for (let i = 0; i < 60; i++) {
+    const sx = (i * 137.5 + level * 3) % W;
+    const sy = (i * 89.3 + level * 5) % H;
+    ctx.fillStyle = `rgba(255,255,255,${i % 5 === 0 ? 0.8 : 0.3})`;
+    ctx.fillRect(sx, sy, 1, 1);
+  }
+
+  enemies.forEach(e => drawShip(e.x, e.y, e.w, e.h, e.type === 'elite' ? '#f84' : '#4cf', false));
+
+  bullets.forEach(b => {
+    ctx.fillStyle = '#ffe066'; ctx.fillRect(b.x - 2, b.y - 6, 4, 12);
+  });
+  enemyBullets.forEach(b => {
+    ctx.fillStyle = '#f55'; ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI*2); ctx.fill();
+  });
+
+  drawShip(player.x, player.y, player.w, player.h, '#4af', true);
+
+  particles.forEach(p => {
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI*2); ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+function loop(ts) {
+  if (state !== 'playing') return;
+  const dt = Math.min((ts - lastTime) / 1000, 0.05);
+  lastTime = ts;
+  update(dt); draw();
+  animId = requestAnimationFrame(loop);
+}
+
+function updateUI() {
+  document.getElementById('score').textContent = score;
+  document.getElementById('lives').textContent = '♥'.repeat(Math.max(0, lives));
+  document.getElementById('level').textContent = level;
+}
+
+function endGame(won) {
+  state = 'over';
+  cancelAnimationFrame(animId);
+  draw();
+  document.getElementById('msg').textContent = won ? '🎉 You win!' : `Game over — score: ${score}`;
+  document.getElementById('btn').textContent = 'Play Again';
+  document.getElementById('btn').style.display = 'inline-block';
+}
+
+document.getElementById('btn').addEventListener('click', () => {
+  state = 'playing';
+  document.getElementById('btn').style.display = 'none';
+  document.getElementById('msg').textContent = '';
+  init();
+  lastTime = performance.now();
+  animId = requestAnimationFrame(loop);
+});
+
+document.addEventListener('keydown', e => { keys[e.key] = true; if (e.key === ' ') e.preventDefault(); });
+document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+let touchLeft = false, touchRight = false, touchShoot = false;
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  touchLeft = false; touchRight = false; touchShoot = false;
+  [...e.touches].forEach(t => {
+    const rx = t.clientX - canvas.getBoundingClientRect().left;
+    const zone = rx / W;
+    if (zone < 0.33) touchLeft = true;
+    else if (zone > 0.66) touchRight = true;
+    else touchShoot = true;
+  });
+}, { passive: false });
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  touchLeft = false; touchRight = false; touchShoot = false;
+  [...e.touches].forEach(t => {
+    const rx = t.clientX - canvas.getBoundingClientRect().left;
+    const zone = rx / W;
+    if (zone < 0.33) touchLeft = true;
+    else if (zone > 0.66) touchRight = true;
+    else touchShoot = true;
+  });
+}, { passive: false });
+
+(function syncTouch() {
+  keys['ArrowLeft'] = touchLeft;
+  keys['ArrowRight'] = touchRight;
+  keys[' '] = touchShoot;
+  requestAnimationFrame(syncTouch);
+})();
+
+ctx.fillStyle = '#0a0a1a'; ctx.fillRect(0, 0, W, H);
+ctx.fillStyle = '#4af'; ctx.font = '500 22px monospace'; ctx.textAlign = 'center';
+ctx.fillText('SPACE SHOOTER', W/2, H/2 - 20);
+ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '14px monospace';
+ctx.fillText('Press Start Game to play', W/2, H/2 + 16);
+</script>
+</body>
+</html>
