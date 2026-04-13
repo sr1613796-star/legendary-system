@@ -1,0 +1,5 @@
+git init
+git add .
+git commit -m "Add game"
+git remote add origin https://github.com/sr1613796-star/legendary-system.git
+git push -u origin main
